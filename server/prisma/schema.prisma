@@ -1,0 +1,262 @@
+// SmartSpend AI - database schema
+// Money is always DECIMAL(12,2), never FLOAT.
+// Calendar dates (transaction date, due date) are DATE columns: they describe
+// the user's local day and are never shifted by a timezone. Audit timestamps
+// (createdAt...) are stored in UTC.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum TransactionType {
+  income
+  expense
+  savings // money moved into a savings goal
+}
+
+enum TransactionSource {
+  manual
+  recurring
+  sweep // unspent daily allowance moved to a goal from the Daily Planner
+}
+
+enum AccountType {
+  cash
+  bank
+  credit_card
+  ewallet
+}
+
+enum CategoryKind {
+  income
+  expense
+}
+
+enum Frequency {
+  weekly
+  biweekly
+  monthly
+  yearly
+}
+
+enum NotificationType {
+  budget_threshold
+  budget_exceeded
+  bill_reminder
+  unusual_spending
+  weekly_report
+  goal_reached
+}
+
+enum InsightKind {
+  analysis
+  auto_budget
+  chat
+}
+
+model User {
+  id              Int      @id @default(autoincrement())
+  email           String   @unique @db.VarChar(191)
+  passwordHash    String   @map("password_hash") @db.VarChar(100)
+  name            String   @db.VarChar(100)
+  currency        String   @default("USD") @db.Char(3)
+  timezone        String   @default("UTC") @db.VarChar(64)
+  // JSON array of percentages, e.g. [50, 80, 100]
+  alertThresholds Json     @map("alert_thresholds")
+  billReminderDays Int     @default(3) @map("bill_reminder_days")
+  notifyUnusual   Boolean  @default(true) @map("notify_unusual")
+  notifyWeekly    Boolean  @default(true) @map("notify_weekly")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  accounts      Account[]
+  categories    Category[]
+  transactions  Transaction[]
+  budgets       Budget[]
+  goals         SavingsGoal[]
+  recurring     RecurringTransaction[]
+  notifications Notification[]
+  insights      AiInsight[]
+
+  @@map("users")
+}
+
+model Account {
+  id             Int         @id @default(autoincrement())
+  userId         Int         @map("user_id")
+  name           String      @db.VarChar(60)
+  type           AccountType @default(cash)
+  openingBalance Decimal     @default(0) @map("opening_balance") @db.Decimal(12, 2)
+  archived       Boolean     @default(false)
+  createdAt      DateTime    @default(now()) @map("created_at")
+
+  user         User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+  recurring    RecurringTransaction[]
+
+  @@index([userId])
+  @@map("accounts")
+}
+
+model Category {
+  id       Int          @id @default(autoincrement())
+  userId   Int          @map("user_id")
+  name     String       @db.VarChar(60)
+  kind     CategoryKind @default(expense)
+  icon     String       @default("tag") @db.VarChar(30)
+  color    String       @default("#64748b") @db.VarChar(9)
+  // Fixed costs (rent, tuition) are excluded from the daily spending plan.
+  isFixed  Boolean      @default(false) @map("is_fixed")
+  archived Boolean      @default(false)
+
+  user             User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions     Transaction[]
+  budgetCategories BudgetCategory[]
+  recurring        RecurringTransaction[]
+
+  @@unique([userId, name, kind])
+  @@map("categories")
+}
+
+model Transaction {
+  id            Int               @id @default(autoincrement())
+  userId        Int               @map("user_id")
+  accountId     Int               @map("account_id")
+  categoryId    Int?              @map("category_id")
+  goalId        Int?              @map("goal_id")
+  recurringId   Int?              @map("recurring_id")
+  type          TransactionType
+  source        TransactionSource @default(manual)
+  amount        Decimal           @db.Decimal(12, 2) // always positive
+  date          DateTime          @db.Date
+  description   String            @default("") @db.VarChar(255)
+  paymentMethod String?           @map("payment_method") @db.VarChar(40)
+  createdAt     DateTime          @default(now()) @map("created_at")
+  updatedAt     DateTime          @updatedAt @map("updated_at")
+
+  user      User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account   Account               @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  category  Category?             @relation(fields: [categoryId], references: [id])
+  goal      SavingsGoal?          @relation(fields: [goalId], references: [id], onDelete: SetNull)
+  recurring RecurringTransaction? @relation(fields: [recurringId], references: [id], onDelete: SetNull)
+
+  @@index([userId, date])
+  @@index([userId, type, date])
+  @@index([userId, categoryId, date])
+  @@map("transactions")
+}
+
+model Budget {
+  id            Int      @id @default(autoincrement())
+  userId        Int      @map("user_id")
+  month         String   @db.Char(7) // "YYYY-MM"
+  income        Decimal  @db.Decimal(12, 2)
+  savingsTarget Decimal  @default(0) @map("savings_target") @db.Decimal(12, 2)
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  user       User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  categories BudgetCategory[]
+
+  @@unique([userId, month])
+  @@map("budgets")
+}
+
+model BudgetCategory {
+  id         Int     @id @default(autoincrement())
+  budgetId   Int     @map("budget_id")
+  categoryId Int     @map("category_id")
+  limit      Decimal @map("limit_amount") @db.Decimal(12, 2)
+
+  budget   Budget   @relation(fields: [budgetId], references: [id], onDelete: Cascade)
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@unique([budgetId, categoryId])
+  @@map("budget_categories")
+}
+
+model SavingsGoal {
+  id           Int       @id @default(autoincrement())
+  userId       Int       @map("user_id")
+  name         String    @db.VarChar(80)
+  targetAmount Decimal   @map("target_amount") @db.Decimal(12, 2)
+  targetDate   DateTime? @map("target_date") @db.Date
+  icon         String    @default("target") @db.VarChar(30)
+  color        String    @default("#10b981") @db.VarChar(9)
+  archived     Boolean   @default(false)
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  contributions Transaction[]
+
+  @@index([userId])
+  @@map("savings_goals")
+}
+
+model RecurringTransaction {
+  id            Int             @id @default(autoincrement())
+  userId        Int             @map("user_id")
+  accountId     Int             @map("account_id")
+  categoryId    Int?            @map("category_id")
+  type          TransactionType
+  amount        Decimal         @db.Decimal(12, 2)
+  description   String          @db.VarChar(255)
+  frequency     Frequency       @default(monthly)
+  nextDueDate   DateTime        @map("next_due_date") @db.Date
+  endDate       DateTime?       @map("end_date") @db.Date
+  // true: post the transaction automatically on the due date.
+  // false: only remind the user (bill reminder).
+  autoPost      Boolean         @default(true) @map("auto_post")
+  active        Boolean         @default(true)
+  createdAt     DateTime        @default(now()) @map("created_at")
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account      Account       @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  category     Category?     @relation(fields: [categoryId], references: [id])
+  transactions Transaction[]
+
+  @@index([userId, active, nextDueDate])
+  @@map("recurring_transactions")
+}
+
+model Notification {
+  id        Int              @id @default(autoincrement())
+  userId    Int              @map("user_id")
+  type      NotificationType
+  title     String           @db.VarChar(120)
+  message   String           @db.VarChar(500)
+  tip       String?          @db.VarChar(300)
+  // Prevents sending the same alert twice (e.g. "budget:2026-11:cat:4:80").
+  dedupeKey String           @map("dedupe_key") @db.VarChar(120)
+  data      Json?
+  readAt    DateTime?        @map("read_at")
+  createdAt DateTime         @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, dedupeKey])
+  @@index([userId, createdAt])
+  @@map("notifications")
+}
+
+model AiInsight {
+  id        Int         @id @default(autoincrement())
+  userId    Int         @map("user_id")
+  kind      InsightKind
+  month     String?     @db.Char(7)
+  // "gemini" or "rules" (deterministic fallback when the AI is unavailable)
+  source    String      @db.VarChar(20)
+  prompt    String?     @db.Text
+  content   Json
+  createdAt DateTime    @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, kind, createdAt])
+  @@map("ai_insights")
+}

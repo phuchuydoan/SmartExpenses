@@ -1,0 +1,16 @@
+export const DEFAULT_CATEGORIES = [
+  { name: 'Housing', kind: 'expense', icon: 'home', color: '#6250d6', isFixed: true },
+  { name: 'Food & Drinks', kind: 'expense', icon: 'utensils', color: '#eb6834' },
+  { name: 'Transportation', kind: 'expense', icon: 'bus', color: '#2a78d6' },
+  { name: 'Education', kind: 'expense', icon: 'book', color: '#1baf7a' },
+  { name: 'Personal', kind: 'expense', icon: 'user', color: '#e87ba4' },
+  { name: 'Entertainment', kind: 'expense', icon: 'film', color: '#eda100' },
+  { name: 'Shopping', kind: 'expense', icon: 'bag', color: '#008300' },
+  { name: 'Health', kind: 'expense', icon: 'heart', color: '#e34948' },
+  { name: 'Bills & Utilities', kind: 'expense', icon: 'bolt', color: '#64748b', isFixed: true },
+  { name: 'Emergency', kind: 'expense', icon: 'shield', color: '#475569' },
+  { name: 'Salary', kind: 'income', icon: 'briefcase', color: '#10b981' },
+  { name: 'Allowance', kind: 'income', icon: 'gift', color: '#22c55e' },
+  { name: 'Freelance', kind: 'income', icon: 'laptop', color: '#06b6d4' },
+  { name: 'Other income', kind: 'income', icon: 'plus', color: '#a3e635' },
+];
